@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
-
+import tempfile
 # Carga las variables del archivo .env
 load_dotenv()
 
@@ -21,7 +21,7 @@ app = FastAPI()
 origins = [
     "https://tenesedu.github.io",
     "http://localhost",
-    "http://localhost:8080",
+    "http://localhost:3000",
 ]
 # Configurar CORS
 app.add_middleware(
@@ -35,6 +35,8 @@ app.add_middleware(
 
 @app.post("/upload")
 async def convert_and_send(file: UploadFile = File(...), email: str = Form(...)):
+    pdf_path = None
+    epub_path = None
     try:
         # Guardar el archivo PDF físicamente
         pdf_path = save_pdf(file)
@@ -56,23 +58,20 @@ async def convert_and_send(file: UploadFile = File(...), email: str = Form(...))
 
     finally:
         # Limpieza de archivos temporales
-        if os.path.exists(pdf_path):
-            os.remove(pdf_path)
-        if os.path.exists(epub_path):
-            os.remove(epub_path)
+        if pdf_path and os.path.exists(pdf_path):
+            os.unlink(pdf_path)
+        if epub_path and os.path.exists(epub_path):
+            os.unlink(epub_path)
 
 
 def save_pdf(file: UploadFile) -> str:
     """
-    Guarda el archivo PDF recibido en disco.
-
-    Args:
-        file (UploadFile): Archivo PDF subido.
-
-    Returns:
-        str: Ruta del archivo PDF guardado.
+    Saves the uploaded PDF file with its original filename.
     """
-    pdf_path = f"./{file.filename}"
+    # Use a sanitized version of the original filename
+    sanitized_filename = ''.join(c for c in file.filename if c.isalnum() or c in ('.', '_', '-'))
+    pdf_path = f"/tmp/{sanitized_filename}"
+    
     with open(pdf_path, "wb") as f:
         f.write(file.file.read())
     return pdf_path
