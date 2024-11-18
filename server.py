@@ -21,7 +21,7 @@ app = FastAPI()
 # Configurar CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://tenesedu.github.io/kindlezap-frontend/"],  # Cambia por el dominio de tu frontend
+    allow_origins=["https://tenesedu.github.io"],  # Cambia por el dominio de tu frontend
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
