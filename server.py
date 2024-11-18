@@ -66,15 +66,12 @@ async def convert_and_send(file: UploadFile = File(...), email: str = Form(...))
 
 def save_pdf(file: UploadFile) -> str:
     """
-    Saves the uploaded PDF file with its original filename.
+    Saves the uploaded PDF file in a temporary directory.
     """
-    # Use a sanitized version of the original filename
-    sanitized_filename = ''.join(c for c in file.filename if c.isalnum() or c in ('.', '_', '-'))
-    pdf_path = f"/tmp/{sanitized_filename}"
-    
-    with open(pdf_path, "wb") as f:
-        f.write(file.file.read())
-    return pdf_path
+    # Use tempfile to create a secure temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+        temp_file.write(file.file.read())
+        return temp_file.name
 
 
 def convert_pdf_to_epub(pdf_path: str) -> str:
