@@ -18,10 +18,15 @@ email_password = os.getenv("EMAIL_PASSWORD")
 
 app = FastAPI()
 
+origins = [
+    "https://tenesedu.github.io",
+    "http://localhost",
+    "http://localhost:8080",
+]
 # Configurar CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://tenesedu.github.io"],  # Cambia por el dominio de tu frontend
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
