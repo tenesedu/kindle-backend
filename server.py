@@ -10,6 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import tempfile
 import traceback
+from fastapi import Body
+from ebooklib import epub, ITEM_DOCUMENT,  ITEM_IMAGE
+import base64
+from bs4 import BeautifulSoup
 
 # Carga las variables del archivo .env
 load_dotenv()
@@ -76,6 +80,69 @@ async def convert_and_send(file: UploadFile = File(...), email: str = Form(...))
             os.unlink(epub_path)
             print(f"Archivo temporal eliminado: {epub_path}")
 
+@app.post("/convert")
+async def convert_pdf(file: UploadFile):
+
+    pdf_path = None
+    epub_path = None
+    try:
+
+        # Guardar el archivo PDF físicamente
+        pdf_path = save_pdf(file)
+        print(f"PDF guardado en: {pdf_path}")
+
+        # Convertir el PDF a EPUB
+        epub_path = convert_pdf_to_epub(pdf_path)
+        print(f"EPUB convertido en: {epub_path}")
+
+        if not epub_path:
+            print("Error: La conversión a EPUB falló")
+            return JSONResponse({"error": "Error during conversion"}, status_code=500)
+        else:
+            html_content = epub_to_html(epub_path)
+
+            if html_content:
+                html_content_cover_remove = remove_cover_svg(html_content)
+                return {"html": html_content_cover_remove}
+
+    except Exception as e:
+        print(f"Error en /upload: {e}")
+        print(traceback.format_exc())  # Registrar el stack trace completo
+        return JSONResponse({"error": "Internal Server Error"}, status_code=500)
+
+
+def epub_to_html(epub_path: str) -> str:
+    book = epub.read_epub(epub_path)
+    html_content = ""
+
+    for item in book.items:
+        if item.get_type() == ITEM_DOCUMENT:
+            # Agregar contenido del capítulo al HTML
+            html_content += item.get_content().decode("utf-8")
+        elif item.get_type() == ITEM_IMAGE:
+            # Convertir imágenes a base64
+            image_name = item.get_name()
+            if image_name == "cover_image.png":
+                continue 
+            image_data = item.get_content()
+            image_base64 = base64.b64encode(image_data).decode("utf-8")
+
+            # Reemplazar la referencia de la imagen en el HTML
+            html_content = html_content.replace(
+                f'src="{image_name}"',
+                f'src="data:image/png;base64,{image_base64}"'
+            )
+
+    return html_content
+
+
+def remove_cover_svg(html_content: str) -> str:
+    soup = BeautifulSoup(html_content, "html.parser")
+    # Encuentra todos los elementos <svg> con una referencia a "cover_image.jpg"
+    for svg in soup.find_all("svg"):
+        if svg.find("image", {"xlink:href": "cover_image.jpg"}):
+            svg.decompose()  # Elimina el elemento <svg>
+    return str(soup)
 
 def save_pdf(file: UploadFile) -> str:
     """
