@@ -17,22 +17,34 @@ from bs4 import BeautifulSoup
 import requests
 import os
 import openai
+import pymupdf
+import json
 
-load_dotenv("/app/.env")
+# START APP()
+app = FastAPI()
+
+# ENVIRONMENTS VARIABLES
+load_dotenv()
 
 email_address = os.getenv("EMAIL_ADDRESS")
 email_password = os.getenv("EMAIL_PASSWORD")
 openai_api_key = os.getenv("OPENAI_API_KEY")
 openai.api_key = openai_api_key
 
-app = FastAPI()
+print(f"OPENNNNN {openai.api_key}")
 
+# GLOBAL VARIABLES
+# converted_file_path = None
+# temp_file = None
+# received_file = None
+
+# CORS
 origins = [
     "https://tenesedu.github.io",
     "http://localhost",
     "http://localhost:3000",
 ]
-# Configurar CORS
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -41,129 +53,65 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def summarize_text(text: str) -> str:
-    print(f"Original text length: {len(text)}")
 
-    # Limitar la longitud del texto
-    if len(text) > 1000:
-        text = text[:1000]
-        print(f"Truncated text length: {len(text)}")
-
-    try:
-        
-        # Llamada al modelo de OpenAI
-
-        response = openai.ChatCompletion.create(
-            messages=[{
-                "role": "user",
-                "content": f"Give me a summmary of this book: {text}",
-            }],
-            model="gpt-4o-mini",
-        )
-
-        summary = response["choices"][0]["message"]["content"]
-        return ({"summary": summary})
-    except Exception as e:
-        # Manejar errores de la API
-        print(f"Error: {e}")
-        return "An error occurred while summarizing the text."
-
-
+# ENDPOINTS
 @app.post("/summarize")
 async def summarize_file(file: UploadFile):
-    print("hola")  # Esto confirma que la función inicia
-    print(f"File name: {file.filename}")  # Verifica que se recibió el archivo
-    print(f"Content type: {file.content_type}")  # Asegúrate de que el tipo sea correcto
 
     try:
-        # Procesa texto plano
-        if file.content_type == "text/plain":
-            content = await file.read()
-            text = content.decode("utf-8")
-            print(f"Plain text extracted: {text[:100]}")  # Muestra los primeros 100 caracteres
-        
-        # Procesa PDF
-        elif file.content_type == "application/pdf":
-            from PyPDF2 import PdfReader
-            pdf_reader = PdfReader(file.file)
-            text = ""
-            for page in pdf_reader.pages:
-                text += page.extract_text()
-            print(f"PDF text extracted: {text[:1000]}")  # Muestra un resumen del texto extraído
+        if file.content_type != "application/pdf":
+            raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
-        # Genera el resumen
+        temp_file = save_pdf(file)
+
+        pdf_document = pymupdf.open(temp_file)
+
+        text = ""
+        for page_num in range(min(3, pdf_document.page_count)): 
+            page = pdf_document[page_num]
+            text += page.get_text()
+
+        pdf_document.close()
+
+        if not text.strip():
+            raise ValueError("No text found in the PDF.")
+
         summary = summarize_text(text)
-        print(f"Summary generated: {summary}")  # Muestra el resumen generado
+        print(f"Summary: {summary}")
 
-        return {"summary": summary}
+        return JSONResponse(
+            content={"summary": summary},
+            headers={"Content-Type": "application/json"}
+        )
 
+    except HTTPException as http_exc:
+        print(f"HTTP Error: {http_exc.detail}")
+        raise http_exc
     except Exception as e:
-        print(f"Error: {str(e)}")  # Imprime el error para depurar
+        print(f"Unexpected error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
-
-@app.post("/upload")
-async def convert_and_send(file: UploadFile = File(...), email: str = Form(...)):
-    pdf_path = None
-    epub_path = None
-    try:
-        print(f"Recibido archivo: {file.filename}")
-        print(f"Correo Kindle: {email}")
-
-        # Guardar el archivo PDF físicamente
-        pdf_path = save_pdf(file)
-        print(f"PDF guardado en: {pdf_path}")
-
-        # Convertir el PDF a EPUB
-        epub_path = convert_pdf_to_epub(pdf_path)
-        print(f"EPUB convertido en: {epub_path}")
-
-        if not epub_path:
-            print("Error: La conversión a EPUB falló")
-            return JSONResponse({"error": "Error during conversion"}, status_code=500)
-
-        # Enviar el archivo EPUB al correo del usuario
-        if send_to_kindle(epub_path, email):
-            print("Archivo enviado correctamente")
-            return JSONResponse({"message": "Book successfully sent to Kindle!"}, status_code=200)
-        else:
-            print("Error: El archivo no se envió")
-            return JSONResponse({"error": "Error sending file"}, status_code=500)
-
-    except Exception as e:
-        print(f"Error en /upload: {e}")
-        print(traceback.format_exc())  # Registrar el stack trace completo
-        return JSONResponse({"error": "Internal Server Error"}, status_code=500)
-
     finally:
-        # Limpieza de archivos temporales
-        if pdf_path and os.path.exists(pdf_path):
-            os.unlink(pdf_path)
-            print(f"Archivo temporal eliminado: {pdf_path}")
-        if epub_path and os.path.exists(epub_path):
-            os.unlink(epub_path)
-            print(f"Archivo temporal eliminado: {epub_path}")
-
+        # Limpiar el archivo temporal
+        if 'temp_file' in locals() and os.path.exists(temp_file):
+            os.remove(temp_file)
+            print(f"Archivo temporal eliminado: {temp_file}")
 
 @app.post("/convert")
 async def convert_pdf(file: UploadFile):
 
-    pdf_path = None
-    epub_path = None
+    converted_file_path = None  
+    temp_file = None
     try:
-
         # Guardar el archivo PDF físicamente
-        pdf_path = save_pdf(file)
-        print(f"PDF guardado en: {pdf_path}")
+        temp_file = save_pdf(file)
 
         # Convertir el PDF a EPUB
-        epub_path = convert_pdf_to_epub(pdf_path)
-        print(f"EPUB convertido en: {epub_path}")
+        converted_file_path = convert_pdf_to_epub(temp_file)
 
-        if not epub_path:
-            print("Error: La conversión a EPUB falló")
+        if not converted_file_path:
             return JSONResponse({"error": "Error during conversion"}, status_code=500)
         else:
-            html_content = epub_to_html(epub_path)
+            html_content = epub_to_html(converted_file_path)
 
             if html_content:
                 html_content_cover_remove = remove_cover_svg(html_content)
@@ -174,46 +122,104 @@ async def convert_pdf(file: UploadFile):
         print(traceback.format_exc())  # Registrar el stack trace completo
         return JSONResponse({"error": "Internal Server Error"}, status_code=500)
 
-
-def epub_to_html(epub_path: str) -> str:
-    book = epub.read_epub(epub_path)
-    html_content = ""
-
-    for item in book.items:
-        if item.get_type() == ITEM_DOCUMENT:
-            # Agregar contenido del capítulo al HTML
-            html_content += item.get_content().decode("utf-8")
-        elif item.get_type() == ITEM_IMAGE:
-            # Convertir imágenes a base64
-            image_name = item.get_name()
-            if image_name == "cover_image.png":
-                continue 
-            image_data = item.get_content()
-            image_base64 = base64.b64encode(image_data).decode("utf-8")
-
-            # Reemplazar la referencia de la imagen en el HTML
-            html_content = html_content.replace(
-                f'src="{image_name}"',
-                f'src="data:image/png;base64,{image_base64}"'
-            )
-
-    return html_content
+    finally:
+        # Limpieza del archivo PDF original
+        if temp_file and os.path.exists(temp_file):
+            os.remove(temp_file)
+            print(f"Archivo temporal eliminado: {temp_file}")
 
 
-def remove_cover_svg(html_content: str) -> str:
-    soup = BeautifulSoup(html_content, "html.parser")
-    # Encuentra todos los elementos <svg> con una referencia a "cover_image.jpg"
-    for svg in soup.find_all("svg"):
-        if svg.find("image", {"xlink:href": "cover_image.jpg"}):
-            svg.decompose()  # Elimina el elemento <svg>
-    return str(soup)
+@app.post("/send")
+def send_to_kindle(file: UploadFile, email: str = Form(...), metadata: str = Form(...)):
+    """
+    Envía el archivo ePub al correo Kindle del usuario usando Gmail.
+    """
+    converted_file_path = None
+    temp_file = None
+    metadata_dict = None
+    try:
+        # Guardar el archivo PDF físicamente
+        temp_file = save_pdf(file)
+
+        # Convertir el PDF a EPUB
+        converted_file_path = convert_pdf_to_epub(temp_file)
+
+        if not converted_file_path:
+            return JSONResponse({"error": "Error during conversion"}, status_code=500)
+        
+        # Convertir metadata a diccionario
+        metadata_dict = json.loads(metadata)
+        print(f"Metadatos recibidos: {metadata_dict}")
+
+        # Agregar los metadatos al archivo EPUB
+    
+
+        # Crear el mensaje
+        msg = MIMEMultipart()
+        msg['From'] = email_address
+        msg['To'] = email
+        msg['Subject'] = 'Your book for Kindle'
+
+        # Adjuntar el archivo ePub
+        with open(converted_file_path, 'rb') as f:
+            part = MIMEBase('application', 'epub+zip')
+            part.set_payload(f.read())
+            encoders.encode_base64(part)
+            
+            # Establecer el nombre del archivo adjunto
+            filename = f"{metadata_dict.get('title', 'book')}.epub"
+            part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
+            msg.attach(part)
+
+        # Enviar el correo
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()
+            server.login(email_address, email_password)
+            server.sendmail(email_address, email, msg.as_string())
+        
+        print(f"Correo enviado correctamente a: {email}")
+        return {"status": "Email sent successfully"}
+
+    except smtplib.SMTPException as e:
+        print(f"Error SMTP: {e}")
+        raise HTTPException(status_code=500, detail="Error sending email")
+    except Exception as e:
+        print(f"Error al enviar el correo: {e}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+    finally:
+        # Limpieza de archivos temporales
+        if temp_file and os.path.exists(temp_file):
+            os.remove(temp_file)
+            print(f"Archivo temporal eliminado: {temp_file}")
+        if converted_file_path and os.path.exists(converted_file_path):
+            os.remove(converted_file_path)
+            print(f"Archivo EPUB eliminado: {converted_file_path}")
+
+# FUNCTIONS
+def summarize_text(text: str) -> str:
+    if len(text) > 1000:
+        text = text[:1000]
+    try:
+        response = openai.ChatCompletion.create(
+            messages=[{
+                "role": "user",
+                "content": f"Give me a summmary of this book: {text}",
+            }],
+            model="gpt-3.5-turbo",
+        )
+        print(response)
+
+        summary = response["choices"][0]["message"]["content"]
+        return ({"summary": summary})
+    except Exception as e:
+        return "An error occurred while summarizing the text."
+
 
 def save_pdf(file: UploadFile) -> str:
     """
     Guarda el archivo PDF en un directorio temporal.
     """
     try:
-        print(f"Guardando archivo: {file.filename}")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
             temp_file.write(file.file.read())
             print(f"Archivo guardado temporalmente en: {temp_file.name}")
@@ -250,42 +256,63 @@ def convert_pdf_to_epub(pdf_path: str) -> str:
         raise
 
 
-def send_to_kindle(file_path: str, kindle_email: str) -> bool:
+def epub_to_html(epub_path: str) -> str:
+    book = epub.read_epub(epub_path)
+    html_content = ""
+
+    for item in book.items:
+        if item.get_type() == ITEM_DOCUMENT:
+            # Agregar contenido del capítulo al HTML
+            html_content += item.get_content().decode("utf-8")
+        elif item.get_type() == ITEM_IMAGE:
+            # Convertir imágenes a base64
+            image_name = item.get_name()
+            if image_name == "cover_image.png":
+                continue 
+            image_data = item.get_content()
+            image_base64 = base64.b64encode(image_data).decode("utf-8")
+
+            # Reemplazar la referencia de la imagen en el HTML
+            html_content = html_content.replace(
+                f'src="{image_name}"',
+                f'src="data:image/png;base64,{image_base64}"'
+            )
+
+    return html_content
+
+
+def remove_cover_svg(html_content: str) -> str:
+    soup = BeautifulSoup(html_content, "html.parser")
+    # Encuentra todos los elementos <svg> con una referencia a "cover_image.jpg"
+    for svg in soup.find_all("svg"):
+        if svg.find("image", {"xlink:href": "cover_image.jpg"}):
+            svg.decompose()  # Elimina el elemento <svg>
+    return str(soup)
+
+def add_metadata_to_epub(epub_path: str, metadata: dict):
     """
-    Envía el archivo ePub al correo Kindle del usuario usando Gmail.
+    Agrega metadatos a un archivo EPUB existente.
+    Args:
+        epub_path (str): Ruta del archivo EPUB.
+        metadata (dict): Diccionario con los metadatos (título, autor, género, lenguaje).
     """
     try:
-        print(f"Enviando archivo {file_path} a {kindle_email}")
+        book = epub.read_epub(epub_path)
 
-        # Crear el mensaje
-        msg = MIMEMultipart()
-        msg['From'] = email_address
-        msg['To'] = kindle_email
-        msg['Subject'] = 'Your book for Kindle'
+        # Agregar metadatos
+        if 'title' in metadata:
+            book.set_title(metadata['title'])
+        if 'author' in metadata:
+            book.add_author(metadata['author'])
+        if 'language' in metadata:
+            book.set_language(metadata['language'])
+        if 'genre' in metadata:
+            book.add_metadata('DC', 'subject', metadata['genre'])
 
-        # Adjuntar el archivo ePub
-        with open(file_path, 'rb') as f:
-            part = MIMEBase('application', 'epub+zip')
-            part.set_payload(f.read())
-            encoders.encode_base64(part)
-            
-            # Establecer el nombre del archivo adjunto
-            filename = os.path.basename(file_path)
-            part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
-            msg.attach(part)
-
-        # Enviar el correo
-        with smtplib.SMTP('smtp.gmail.com', 587) as server:
-            server.starttls()
-            server.login(email_address, email_password)
-            server.sendmail(email_address, kindle_email, msg.as_string())
-        
-        print(f"Correo enviado correctamente a: {kindle_email}")
-        return True
-
-    except smtplib.SMTPException as e:
-        print(f"Error SMTP: {e}")
-        return False
+        # Guardar el archivo EPUB con los nuevos metadatos
+        epub.write_epub(epub_path, book)
+        print(f"Metadatos agregados al archivo EPUB: {epub_path}")
     except Exception as e:
-        print(f"Error al enviar el correo: {e}")
-        return False
+        print(f"Error al agregar metadatos al EPUB: {e}")
+        raise
+
