@@ -19,6 +19,7 @@ import os
 import openai
 import pymupdf
 import json
+import fitz
 
 # START APP()
 app = FastAPI()
@@ -64,6 +65,12 @@ async def summarize_file(file: UploadFile):
 
         temp_file = save_pdf(file)
 
+        # PDF to HTML
+        pdf_html = pdf_to_html(temp_file)
+
+        if not pdf_html:
+            raise ValueError("Not html found.")
+
         pdf_document = pymupdf.open(temp_file)
 
         text = ""
@@ -80,7 +87,7 @@ async def summarize_file(file: UploadFile):
         print(f"Summary: {summary}")
 
         return JSONResponse(
-            content={"summary": summary},
+            content={"summary": summary, "html": pdf_html},
             headers={"Content-Type": "application/json"}
         )
 
@@ -91,42 +98,9 @@ async def summarize_file(file: UploadFile):
         print(f"Unexpected error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
     finally:
-        # Limpiar el archivo temporal
         if 'temp_file' in locals() and os.path.exists(temp_file):
             os.remove(temp_file)
-            print(f"Archivo temporal eliminado: {temp_file}")
-
-@app.post("/convert")
-async def convert_pdf(file: UploadFile):
-
-    converted_file_path = None  
-    temp_file = None
-    try:
-        # Guardar el archivo PDF físicamente
-        temp_file = save_pdf(file)
-
-        # Convertir el PDF a EPUB
-        converted_file_path = convert_pdf_to_epub(temp_file)
-
-        if not converted_file_path:
-            return JSONResponse({"error": "Error during conversion"}, status_code=500)
-        else:
-            html_content = epub_to_html(converted_file_path)
-
-            if html_content:
-                html_content_cover_remove = remove_cover_svg(html_content)
-                return {"html": html_content_cover_remove}
-
-    except Exception as e:
-        print(f"Error en /upload: {e}")
-        print(traceback.format_exc())  # Registrar el stack trace completo
-        return JSONResponse({"error": "Internal Server Error"}, status_code=500)
-
-    finally:
-        # Limpieza del archivo PDF original
-        if temp_file and os.path.exists(temp_file):
-            os.remove(temp_file)
-            print(f"Archivo temporal eliminado: {temp_file}")
+            print(f"Temporary file {temp_file} deleted successfully.")
 
 
 @app.post("/send")
@@ -141,18 +115,16 @@ def send_to_kindle(file: UploadFile, email: str = Form(...), metadata: str = For
         # Guardar el archivo PDF físicamente
         temp_file = save_pdf(file)
 
+        # Convertir metadata a diccionario
+        metadata_dict = json.loads(metadata)
+        print(metadata_dict)
+
         # Convertir el PDF a EPUB
-        converted_file_path = convert_pdf_to_epub(temp_file)
+        converted_file_path = convert_pdf_to_epub(temp_file, metadata_dict)
 
         if not converted_file_path:
             return JSONResponse({"error": "Error during conversion"}, status_code=500)
         
-        # Convertir metadata a diccionario
-        metadata_dict = json.loads(metadata)
-        print(f"Metadatos recibidos: {metadata_dict}")
-
-        # Agregar los metadatos al archivo EPUB
-    
 
         # Crear el mensaje
         msg = MIMEMultipart()
@@ -229,19 +201,21 @@ def save_pdf(file: UploadFile) -> str:
         raise
 
 
-def convert_pdf_to_epub(pdf_path: str) -> str:
-    """
-    Convierte un archivo PDF a EPUB usando Calibre.
+def convert_pdf_to_epub(pdf_path: str, metadata: dict) -> str:
 
-    Args:
-        pdf_path (str): Ruta del archivo PDF.
-
-    Returns:
-        str: Ruta del archivo EPUB generado si la conversión es exitosa; None si falla.
-    """
     try:
         epub_path = pdf_path.replace(".pdf", ".epub")
-        command = ["ebook-convert", pdf_path, epub_path, "--output-profile", "kindle"]
+        command = [
+            "ebook-convert",
+            pdf_path,
+            epub_path,
+            "--output-profile", "kindle",
+            "--title", metadata["title"],
+            "--authors", metadata["author"],
+            "--language", metadata["language"], 
+            "--tags", metadata["genre"],  
+            "--no-default-epub-cover"  
+        ]
         print(f"Ejecutando comando: {' '.join(command)}")
 
         result = subprocess.run(command, capture_output=True, text=True)
@@ -256,29 +230,56 @@ def convert_pdf_to_epub(pdf_path: str) -> str:
         raise
 
 
-def epub_to_html(epub_path: str) -> str:
-    book = epub.read_epub(epub_path)
-    html_content = ""
+import fitz  # PyMuPDF
+import base64
 
-    for item in book.items:
-        if item.get_type() == ITEM_DOCUMENT:
-            # Agregar contenido del capítulo al HTML
-            html_content += item.get_content().decode("utf-8")
-        elif item.get_type() == ITEM_IMAGE:
-            # Convertir imágenes a base64
-            image_name = item.get_name()
-            if image_name == "cover_image.png":
-                continue 
-            image_data = item.get_content()
-            image_base64 = base64.b64encode(image_data).decode("utf-8")
+def pdf_to_html(pdf_path: str) -> str:
 
-            # Reemplazar la referencia de la imagen en el HTML
-            html_content = html_content.replace(
-                f'src="{image_name}"',
-                f'src="data:image/png;base64,{image_base64}"'
-            )
+    try:
+        doc = fitz.open(pdf_path)
 
-    return html_content
+        html_content = '<?xml version="1.0" encoding="utf-8"?>\n'
+        html_content += '<!DOCTYPE html>\n'
+
+        for page_num in range(doc.page_count):
+            page = doc.load_page(page_num)
+            html = page.get_text("html")
+
+            # Eliminar todos los estilos en línea
+            html = html.replace('style="', '')
+
+            html = html.replace('<img ', '<img style="max-width: 100%; height: auto;" ')  # Limitar el tamaño de las imágenes
+
+            # Añadir contenido de la página al HTML
+            html_content += html
+
+        html_content += "</html>"
+
+        return html_content
+
+    except Exception as e:
+        print(f"Error al convertir PDF a HTML: {e}")
+        raise
+
+
+def convert_pdf_to_epub_no_metadata(pdf_path: str) -> str:
+
+    try:
+        epub_path = pdf_path.replace(".pdf", ".epub")
+        command = [
+            "ebook-convert",
+            pdf_path,
+            epub_path,
+            "--output-profile", "kindle", 
+        ]
+
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode == 0:
+            return epub_path
+        else:
+            return None
+    except Exception as e:
+        raise
 
 
 def remove_cover_svg(html_content: str) -> str:
@@ -288,31 +289,3 @@ def remove_cover_svg(html_content: str) -> str:
         if svg.find("image", {"xlink:href": "cover_image.jpg"}):
             svg.decompose()  # Elimina el elemento <svg>
     return str(soup)
-
-def add_metadata_to_epub(epub_path: str, metadata: dict):
-    """
-    Agrega metadatos a un archivo EPUB existente.
-    Args:
-        epub_path (str): Ruta del archivo EPUB.
-        metadata (dict): Diccionario con los metadatos (título, autor, género, lenguaje).
-    """
-    try:
-        book = epub.read_epub(epub_path)
-
-        # Agregar metadatos
-        if 'title' in metadata:
-            book.set_title(metadata['title'])
-        if 'author' in metadata:
-            book.add_author(metadata['author'])
-        if 'language' in metadata:
-            book.set_language(metadata['language'])
-        if 'genre' in metadata:
-            book.add_metadata('DC', 'subject', metadata['genre'])
-
-        # Guardar el archivo EPUB con los nuevos metadatos
-        epub.write_epub(epub_path, book)
-        print(f"Metadatos agregados al archivo EPUB: {epub_path}")
-    except Exception as e:
-        print(f"Error al agregar metadatos al EPUB: {e}")
-        raise
-
