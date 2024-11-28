@@ -21,7 +21,7 @@ import pymupdf
 import json
 import fitz
 import base64
-
+from fastapi import Request
 # START APP()
 app = FastAPI()
 
@@ -58,38 +58,60 @@ app.add_middleware(
 
 # ENDPOINTS
 @app.post("/summarize")
-async def summarize_file(file: UploadFile):
+async def summarize_file(request: Request):
+    
+    form = await request.form()
+    print("Form data:", form)
+    
+    files = form.getlist("file")
+    if not files:
+        print("No files provided")
+        raise HTTPException(status_code=422, detail="No files provided")
+        
+    temp_files = []
+    summaries = []
+    pdf_htmls = []
 
     try:
-        if file.content_type != "application/pdf":
-            raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+        print(f"Starting to process {len(files)} files")
+        for file in files:
+            if not file or not file.filename:
+                raise HTTPException(status_code=422, detail="Invalid file provided")
+                
+            print(f"Processing file: {file.filename}")
+            if not file.content_type or "pdf" not in file.content_type.lower():
+                raise HTTPException(status_code=400, detail=f"File {file.filename} is not a PDF. Only PDF files are supported.")
 
-        temp_file = save_pdf(file)
+            temp_file = save_pdf(file)
+            temp_files.append(temp_file)
 
         # PDF to HTML
-        pdf_html = pdf_to_html(temp_file)
+        pdf_htmls = pdf_to_html(temp_files)
 
-        if not pdf_html:
-            raise ValueError("Not html found.")
+        if len(pdf_htmls) == 0:
+            raise ValueError("No HTML content found.")
 
+        for temp_file in temp_files:
+            pdf_document = pymupdf.open(temp_file)
 
-        pdf_document = pymupdf.open(temp_file)
+            text = ""
+            for page_num in range(min(3, pdf_document.page_count)):
+                page = pdf_document[page_num]
+                text += page.get_text()
 
-        text = ""
-        for page_num in range(min(3, pdf_document.page_count)): 
-            page = pdf_document[page_num]
-            text += page.get_text()
+            pdf_document.close()
 
-        pdf_document.close()
+            if not text.strip():
+                raise ValueError("No text found in the PDF.")
 
-        if not text.strip():
-            raise ValueError("No text found in the PDF.")
-
-        summary = summarize_text(text)
-        print(f"Summary: {summary}")
+            summary = summarize_text(text)
+            summaries.append(summary)
 
         return JSONResponse(
-            content={"summary": summary, "html": pdf_html},
+            content={
+                "summary": {"summary": summaries}, 
+                "html": pdf_htmls
+            },
             headers={"Content-Type": "application/json"}
         )
 
@@ -100,10 +122,10 @@ async def summarize_file(file: UploadFile):
         print(f"Unexpected error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
     finally:
-        if 'temp_file' in locals() and os.path.exists(temp_file):
-            os.remove(temp_file)
-            print(f"Temporary file {temp_file} deleted successfully.")
-
+        for temp_file in temp_files:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+                print(f"Temporary file {temp_file} deleted successfully.")
 
 @app.post("/send")
 def send_to_kindle(file: UploadFile, email: str = Form(...), metadata: str = Form(...)):
@@ -232,19 +254,22 @@ def convert_pdf_to_epub(pdf_path: str, metadata: dict) -> str:
         raise
 
 
-def pdf_to_html(pdf_path: str) -> str:
+def pdf_to_html(pdf_paths: list[str]) -> str:
 
+    html_contents = []
     try:
-        doc = fitz.open(pdf_path)
+        html_content = ""
+        for pdf_path in pdf_paths:
+            doc = fitz.open(pdf_path)
 
-        html_content = '<?xml version="1.0" encoding="utf-8"?>\n'
-        html_content += '<!DOCTYPE html>\n'
+            html_content += '<?xml version="1.0" encoding="utf-8"?>\n'
+            html_content += '<!DOCTYPE html>\n'
 
-        for page_num in range(doc.page_count):
-            page = doc.load_page(page_num)
-            html = page.get_text("html")
+            for page_num in range(doc.page_count):
+                page = doc.load_page(page_num)
+                html = page.get_text("html")
 
-            # Eliminar todos los estilos en línea
+                # Eliminar todos los estilos en línea
             html = html.replace('style="', '')
 
             html = html.replace('<img ', '<img style="max-width: 100%; height: auto;" ')  # Limitar el tamaño de las imágenes
@@ -252,9 +277,11 @@ def pdf_to_html(pdf_path: str) -> str:
             # Añadir contenido de la página al HTML
             html_content += html
 
-        html_content += "</html>"
+            html_content += "</html>"
 
-        return html_content
+            html_contents.append(html_content)
+
+        return html_contents
 
     except Exception as e:
         print(f"Error al convertir PDF a HTML: {e}")
