@@ -20,6 +20,7 @@ import openai
 import pymupdf
 import json
 import fitz
+import base64
 
 # START APP()
 app = FastAPI()
@@ -70,6 +71,7 @@ async def summarize_file(file: UploadFile):
 
         if not pdf_html:
             raise ValueError("Not html found.")
+
 
         pdf_document = pymupdf.open(temp_file)
 
@@ -230,9 +232,6 @@ def convert_pdf_to_epub(pdf_path: str, metadata: dict) -> str:
         raise
 
 
-import fitz  # PyMuPDF
-import base64
-
 def pdf_to_html(pdf_path: str) -> str:
 
     try:
@@ -260,6 +259,7 @@ def pdf_to_html(pdf_path: str) -> str:
     except Exception as e:
         print(f"Error al convertir PDF a HTML: {e}")
         raise
+
 
 
 def convert_pdf_to_epub_no_metadata(pdf_path: str) -> str:
