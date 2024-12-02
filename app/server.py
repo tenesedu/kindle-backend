@@ -11,18 +11,11 @@ from dotenv import load_dotenv, find_dotenv
 import tempfile
 import traceback
 from fastapi import Body
-from ebooklib import epub, ITEM_DOCUMENT,  ITEM_IMAGE
-import base64
-from bs4 import BeautifulSoup
-import requests
-import os
-import openai
-import pymupdf
-import json
-import fitz
-import base64
 from fastapi import Request
 from typing import List
+import openai
+import fitz
+import pymupdf, json
 # START APP()
 app = FastAPI()
 
@@ -34,19 +27,8 @@ email_password = os.getenv("EMAIL_PASSWORD")
 openai_api_key = os.getenv("OPENAI_API_KEY")
 openai.api_key = openai_api_key
 
-print(f"OPENNNNN {openai.api_key}")
-
-# GLOBAL VARIABLES
-# converted_file_path = None
-# temp_file = None
-# received_file = None
-
 # CORS
-origins = [
-    "https://tenesedu.github.io",
-    "http://localhost",
-    "http://localhost:3000",
-]
+origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
 
 app.add_middleware(
     CORSMiddleware,
@@ -218,21 +200,16 @@ def summarize_text(text: str) -> str:
 
 
 def save_pdf(file: UploadFile) -> str:
-    """
-    Guarda el archivo PDF en un directorio temporal.
-    """
+  
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
             temp_file.write(file.file.read())
-            print(f"Archivo guardado temporalmente en: {temp_file.name}")
             return temp_file.name
     except Exception as e:
-        print(f"Error al guardar el PDF: {e}")
         raise
 
 
 def convert_pdf_to_epub(pdf_path: str, metadata: dict) -> str:
-
     try:
         epub_path = pdf_path.replace(".pdf", ".epub")
         command = [
@@ -246,20 +223,18 @@ def convert_pdf_to_epub(pdf_path: str, metadata: dict) -> str:
             "--tags", metadata["genre"],  
             "--no-default-epub-cover"  
         ]
-        print(f"Ejecutando comando: {' '.join(command)}")
+        print(f"Executing command: {' '.join(command)}")  # Changed from "Ejecutando comando"
 
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode == 0:
-            print(f"Conversión exitosa: {epub_path}")
+            print(f"Conversion successful: {epub_path}")  # Changed from "Conversión exitosa"
             return epub_path
         else:
-            print(f"Error en la conversión: {result.stderr}")
+            print(f"Conversion error: {result.stderr}")  # Changed from "Error en la conversión"
             return None
     except Exception as e:
-        print(f"Error al convertir PDF a EPUB: {e}")
+        print(f"Error converting PDF to EPUB: {e}")  # Changed from "Error al convertir PDF a EPUB"
         raise
-
-
 def pdf_to_html(pdf_paths: list[str]) -> str:
     try:
         # Only process the first PDF file
@@ -287,35 +262,5 @@ def pdf_to_html(pdf_paths: list[str]) -> str:
         return html_content
 
     except Exception as e:
-        print(f"Error al convertir PDF a HTML: {e}")
+        print(f"Error converting PDF to HTML: {e}") 
         raise
-
-
-
-def convert_pdf_to_epub_no_metadata(pdf_path: str) -> str:
-
-    try:
-        epub_path = pdf_path.replace(".pdf", ".epub")
-        command = [
-            "ebook-convert",
-            pdf_path,
-            epub_path,
-            "--output-profile", "kindle", 
-        ]
-
-        result = subprocess.run(command, capture_output=True, text=True)
-        if result.returncode == 0:
-            return epub_path
-        else:
-            return None
-    except Exception as e:
-        raise
-
-
-def remove_cover_svg(html_content: str) -> str:
-    soup = BeautifulSoup(html_content, "html.parser")
-    # Encuentra todos los elementos <svg> con una referencia a "cover_image.jpg"
-    for svg in soup.find_all("svg"):
-        if svg.find("image", {"xlink:href": "cover_image.jpg"}):
-            svg.decompose()  # Elimina el elemento <svg>
-    return str(soup)
