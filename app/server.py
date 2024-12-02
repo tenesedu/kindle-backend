@@ -22,6 +22,7 @@ import json
 import fitz
 import base64
 from fastapi import Request
+from typing import List
 # START APP()
 app = FastAPI()
 
@@ -128,68 +129,73 @@ async def summarize_file(request: Request):
                 print(f"Temporary file {temp_file} deleted successfully.")
 
 @app.post("/send")
-def send_to_kindle(file: UploadFile, email: str = Form(...), metadata: str = Form(...)):
+def send_to_kindle(files: List[UploadFile] = File(...), email: str = Form(...), metadata: str = Form(...)):
     """
-    Envía el archivo ePub al correo Kindle del usuario usando Gmail.
+    Sends multiple ePub files to user's Kindle email using Gmail.
     """
-    converted_file_path = None
-    temp_file = None
-    metadata_dict = None
+    temp_files = []
+    converted_files = []
+    metadata_list = None
     try:
-        # Guardar el archivo PDF físicamente
-        temp_file = save_pdf(file)
+        # Parse metadata JSON string to list of dictionaries
+        metadata_list = json.loads(metadata)
+        print(f"Metadata list: {metadata_list}")
 
-        # Convertir metadata a diccionario
-        metadata_dict = json.loads(metadata)
-        print(metadata_dict)
+        # Process each file with its corresponding metadata
+        for file, metadata_dict in zip(files, metadata_list):
+            # Save PDF temporarily
+            temp_file = save_pdf(file)
+            temp_files.append(temp_file)
 
-        # Convertir el PDF a EPUB
-        converted_file_path = convert_pdf_to_epub(temp_file, metadata_dict)
+            # Convert PDF to EPUB with metadata
+            converted_file = convert_pdf_to_epub(temp_file, metadata_dict)
+            if not converted_file:
+                raise HTTPException(status_code=500, detail="Error during conversion")
+            converted_files.append(converted_file)
 
-        if not converted_file_path:
-            return JSONResponse({"error": "Error during conversion"}, status_code=500)
-        
-
-        # Crear el mensaje
+        # Create and send email with all attachments
         msg = MIMEMultipart()
         msg['From'] = email_address
         msg['To'] = email
-        msg['Subject'] = 'Your book for Kindle'
+        msg['Subject'] = 'Your books for Kindle'
 
-        # Adjuntar el archivo ePub
-        with open(converted_file_path, 'rb') as f:
-            part = MIMEBase('application', 'epub+zip')
-            part.set_payload(f.read())
-            encoders.encode_base64(part)
-            
-            # Establecer el nombre del archivo adjunto
-            filename = f"{metadata_dict.get('title', 'book')}.epub"
-            part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
-            msg.attach(part)
+        # Attach all converted files
+        for converted_file, metadata_dict in zip(converted_files, metadata_list):
+            with open(converted_file, 'rb') as f:
+                part = MIMEBase('application', 'epub+zip')
+                part.set_payload(f.read())
+                encoders.encode_base64(part)
+                
+                # Set attachment filename using metadata title
+                filename = f"{metadata_dict.get('title', 'book')}.epub"
+                part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
+                msg.attach(part)
 
-        # Enviar el correo
+        # Send email
         with smtplib.SMTP('smtp.gmail.com', 587) as server:
             server.starttls()
             server.login(email_address, email_password)
             server.sendmail(email_address, email, msg.as_string())
         
-        print(f"Correo enviado correctamente a: {email}")
+        print(f"Email sent successfully to: {email}")
         return {"status": "Email sent successfully"}
 
     except smtplib.SMTPException as e:
-        print(f"Error SMTP: {e}")
+        print(f"SMTP Error: {e}")
         raise HTTPException(status_code=500, detail="Error sending email")
     except Exception as e:
-        print(f"Error al enviar el correo: {e}")
+        print(f"Error sending email: {e}")
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
     finally:
-        # Limpieza de archivos temporales
-        if temp_file and os.path.exists(temp_file):
-            os.remove(temp_file)
-            print(f"Archivo temporal eliminado: {temp_file}")
-        if converted_file_path and os.path.exists(converted_file_path):
-            os.remove(converted_file_path)
-            print(f"Archivo EPUB eliminado: {converted_file_path}")
+        # Cleanup temporary files
+        for temp_file in temp_files:
+            if temp_file and os.path.exists(temp_file):
+                os.remove(temp_file)
+                print(f"Temporary file deleted: {temp_file}")
+        for converted_file in converted_files:
+            if converted_file and os.path.exists(converted_file):
+                os.remove(converted_file)
+                print(f"EPUB file deleted: {converted_file}")
 
 # FUNCTIONS
 def summarize_text(text: str) -> str:
