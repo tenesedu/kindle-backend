@@ -121,4 +121,4 @@ OPENAI_API_KEY=your-openai-api-key
 ## 📧 Contact
 
 Eduardo Tenés - tenes.trillo.eduardo@gmail.com LinkedIn - (https://www.linkedin.com/in/eduardoten%C3%A9st/)
-Project Link: [https://github.com/yourusername/kindle-backend](https://github.com/yourusername/kindle-backend)
+Project Link: [https://github.com/tenesedu/kindle-backend](https://github.com/yourusername/kindle-backend)
