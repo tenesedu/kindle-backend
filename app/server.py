@@ -255,33 +255,30 @@ def convert_pdf_to_epub(pdf_path: str, metadata: dict) -> str:
 
 
 def pdf_to_html(pdf_paths: list[str]) -> str:
-
-    html_contents = []
     try:
-        html_content = ""
-        for pdf_path in pdf_paths:
-            doc = fitz.open(pdf_path)
+        # Only process the first PDF file
+        pdf_path = pdf_paths[0]
+        doc = fitz.open(pdf_path)
 
-            html_content += '<?xml version="1.0" encoding="utf-8"?>\n'
-            html_content += '<!DOCTYPE html>\n'
+        html_content = '<?xml version="1.0" encoding="utf-8"?>\n'
+        html_content += '<!DOCTYPE html>\n'
 
-            for page_num in range(doc.page_count):
-                page = doc.load_page(page_num)
-                html = page.get_text("html")
+        for page_num in range(doc.page_count):
+            page = doc.load_page(page_num)
+            html = page.get_text("html")
 
-                # Eliminar todos los estilos en línea
+            # Remove all inline styles
             html = html.replace('style="', '')
 
-            html = html.replace('<img ', '<img style="max-width: 100%; height: auto;" ')  # Limitar el tamaño de las imágenes
+            # Limit image sizes
+            html = html.replace('<img ', '<img style="max-width: 100%; height: auto;" ')
 
-            # Añadir contenido de la página al HTML
+            # Add page content to HTML
             html_content += html
 
-            html_content += "</html>"
+        html_content += "</html>"
 
-            html_contents.append(html_content)
-
-        return html_contents
+        return html_content
 
     except Exception as e:
         print(f"Error al convertir PDF a HTML: {e}")
