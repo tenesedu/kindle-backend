@@ -2,6 +2,8 @@ KindleZap Backend 📚
 
 Backend service for KindleZap, handling PDF processing, conversion, and email delivery for the KindleZap application.
 
+Frontend repository: https://github.com/tenesedu/kindlezap-frontend
+
 ## ⚠️ Educational Purposes Disclaimer
 
 **IMPORTANT: This project is strictly for educational and learning purposes only.**
