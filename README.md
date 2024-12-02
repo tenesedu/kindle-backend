@@ -42,9 +42,9 @@ By using or implementing this project, you acknowledge that you're doing so sole
 
 Create a `.env` file with:
 
-EMAIL_ADDRESS=your-email@gmail.com
-EMAIL_PASSWORD=your-app-specific-password
-OPENAI_API_KEY=your-openai-api-key
+ - EMAIL_ADDRESS=your-email@gmail.com
+ - EMAIL_PASSWORD=your-app-specific-password
+ - OPENAI_API_KEY=your-openai-api-key
 
 ### Installation
 
