@@ -84,8 +84,8 @@ async def summarize_file(request: Request):
 
             pdf_document.close()
 
-            if not text.strip():
-                raise ValueError("No text found in the PDF.")
+            # if not text.strip():
+            #     raise ValueError("No text found in the PDF.")
 
             summary = summarize_text(text)
             summaries.append(summary)
